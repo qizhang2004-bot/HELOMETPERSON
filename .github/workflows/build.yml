@@ -21,19 +21,22 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install pyinstaller ultralytics opencv-python-headless torch torchvision --only-binary :all:
+          pip install pyinstaller ultralytics opencv-python torch torchvision --no-cache-dir
           
       - name: Build executable
         run: |
-          pyinstaller --onefile --name helmet_detector --add-data "exp.torchscript;." helmet.py --noconfirm
+          pyinstaller --onefile --name helmet_detector --add-data "exp.pt;." helmet.py --noconfirm --collect-all ultralytics
           
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: helmet_detector
           path: dist/helmet_detector.exe
-          
-      - name: Download in PR
-        if: github.event_name == 'pull_request'
-        run: |
-          echo "Download the artifact from the Actions tab above"
+
+      - name: Upload model file separately
+        uses: actions/upload-artifact@v4
+        with:
+          name: helmet_model
+          path: exp.pt
+          retention-days: 1
+
