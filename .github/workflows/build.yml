@@ -56,47 +56,66 @@ jobs:
           
       - name: Download CUDA Runtime DLLs
         run: |
-          # 下载 NVIDIA CUDA Runtime Redistributable
-          # 这是独立于 CUDA Toolkit 的运行时库，可以自由分发
-          $cudaUrl = "https://github.com/nicknisi/dlls/releases/download/v0.0.3/cuda-12.1.0.zip"
-          Write-Host "Downloading CUDA Runtime from: $cudaUrl"
-          Invoke-WebRequest -Uri $cudaUrl -OutFile cuda_runtime.zip -TimeoutSec 300
+          # 方案：从 GitHub quixbf/dlls 下载 CUDA 12.1 便携版 DLL
+          # 这是第三方收集的 CUDA DLL 包，方便打包
+          $urls = @(
+            "https://github.com/quixbf/dlls/releases/download/12.1.0/cuda_dlls.zip",
+            "https://github.com/nicknisi/dlls/releases/download/v0.0.1/cuda-12.1.0.zip"
+          )
           
-          # 解压
-          Write-Host "Extracting CUDA Runtime..."
-          Expand-Archive -Path cuda_runtime.zip -DestinationPath cuda_runtime -Force
+          $downloaded = $false
+          foreach ($url in $urls) {
+            Write-Host "Trying: $url"
+            try {
+              Invoke-WebRequest -Uri $url -OutFile cuda_dlls.zip -TimeoutSec 60 -ErrorAction Stop
+              $downloaded = $true
+              Write-Host "Download succeeded: $url"
+              break
+            } catch {
+              Write-Host "Failed: $($_.Exception.Message)"
+            }
+          }
           
-          # 列出解压的文件
-          Get-ChildItem -Path cuda_runtime -Recurse -Include *.dll | Select-Object -First 20 FullName, Length
+          if (-not $downloaded) {
+            Write-Host "All URLs failed, using torch package DLLs instead..."
+            # 回退：从 torch 包里提取所有 DLL
+            python -c "
+import os, shutil
+import torch
+tp = os.path.dirname(torch.__file__)
+print(f'Torch path: {tp}')
+os.makedirs('cuda_dlls', exist_ok=True)
+copied = 0
+for root, dirs, files in os.walk(tp):
+    for f in files:
+        if f.endswith('.dll'):
+            src = os.path.join(root, f)
+            dst = os.path.join('cuda_dlls', f)
+            if not os.path.exists(dst):
+                shutil.copy2(src, dst)
+                copied += 1
+print(f'Copied {copied} DLLs from torch')
+"
+          } else {
+            # 解压
+            Write-Host "Extracting..."
+            Expand-Archive -Path cuda_dlls.zip -DestinationPath cuda_dlls -Force
+            Get-ChildItem -Path cuda_dlls -File -Recurse -Include *.dll | Select-Object Name, @{N='Size(MB)';E={[math]::Round($_.Length/1MB,2)}} | Sort-Object 'Size(MB)' -Descending | Select-Object -First 20
+          }
           
       - name: Build CUDA executable
         run: |
-          # 找到 CUDA DLL 目录
-          $cudaDllDir = Get-ChildItem -Path cuda_runtime -Directory | Select-Object -First 1
-          if ($cudaDllDir) {
-            Write-Host "CUDA DLL directory: $($cudaDllDir.FullName)"
-            
-            # 打包命令：包含 CUDA Runtime DLL
-            pyinstaller --onefile --name helmet_detector_cuda `
-              --add-data "exp.pt;." `
-              --add-data "$($cudaDllDir.FullName);." `
-              --collect-all torch `
-              --hidden-import torch.cuda `
-              --hidden-import torch.backends.cudnn `
-              --hidden-import torch.backends.cuda `
-              --hidden-import torch._C `
-              helmet.py --noconfirm
-          } else {
-            Write-Host "No CUDA DLL directory found, building without CUDA DLLs..."
-            pyinstaller --onefile --name helmet_detector_cuda `
-              --add-data "exp.pt;." `
-              --collect-all torch `
-              --hidden-import torch.cuda `
-              --hidden-import torch.backends.cudnn `
-              --hidden-import torch.backends.cuda `
-              --hidden-import torch._C `
-              helmet.py --noconfirm
-          }
+          $dlls = Get-ChildItem cuda_dlls -File -Recurse -Include *.dll -ErrorAction SilentlyContinue
+          Write-Host "Found $($dlls.Count) CUDA DLLs"
+          
+          pyinstaller --onefile --name helmet_detector_cuda `
+            --add-data "exp.pt;." `
+            --collect-all torch `
+            --hidden-import torch.cuda `
+            --hidden-import torch.backends.cudnn `
+            --hidden-import torch.backends.cuda `
+            --hidden-import torch._C `
+            helmet.py --noconfirm
           
       - name: Check exe size
         run: |
@@ -105,7 +124,6 @@ jobs:
             Write-Host "EXE size: $([math]::Round($size, 2)) MB"
           } else {
             Write-Host "EXE not found!"
-            Get-ChildItem dist
           }
           
       - name: Upload CUDA artifact
