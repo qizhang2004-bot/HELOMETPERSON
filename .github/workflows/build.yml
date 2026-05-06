@@ -54,13 +54,95 @@ jobs:
           pip install pyinstaller ultralytics opencv-python --no-cache-dir
           pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
           
+      - name: Find and copy CUDA DLLs
+        run: |
+          python << 'PYEOF'
+          import os
+          import shutil
+          import glob
+
+          import torch
+          torch_path = os.path.dirname(torch.__file__)
+          print(f"Torch path: {torch_path}")
+
+          os.makedirs('cuda_dlls', exist_ok=True)
+          copied = []
+
+          # 1. Copy from torch/lib/
+          lib_path = os.path.join(torch_path, 'lib')
+          if os.path.exists(lib_path):
+              for dll in glob.glob(os.path.join(lib_path, '*.dll')):
+                  shutil.copy(dll, 'cuda_dlls')
+                  copied.append(dll)
+                  print(f"Copied: {dll}")
+
+          # 2. Copy nvrtc, cublas, cudart from torch/
+          for root, dirs, files in os.walk(torch_path):
+              for f in files:
+                  if any(x in f.lower() for x in ['nvrtc', 'nvtx', 'cublas', 'cudart', 'cudnn', 'nvptx']):
+                      if f.endswith('.dll'):
+                          src = os.path.join(root, f)
+                          dst = os.path.join('cuda_dlls', f)
+                          if not os.path.exists(dst):
+                              shutil.copy(src, 'cuda_dlls')
+                              copied.append(src)
+                              print(f"Copied: {src}")
+
+          print(f"\nTotal DLLs copied: {len(copied)}")
+          if copied:
+              print("Files:", os.listdir('cuda_dlls'))
+          else:
+              print("WARNING: No CUDA DLLs found!")
+          PYEOF
+          
+      - name: Check CUDA DLLs
+        run: |
+          echo "=== CUDA DLLs found ==="
+          ls -la cuda_dlls/ 2>/dev/null || echo "No DLLs directory"
+          du -sh cuda_dlls/ 2>/dev/null || echo "No size info"
+          
       - name: Build CUDA executable
         run: |
-          pyinstaller --onefile --name helmet_detector_cuda --add-data "exp.pt;." helmet.py --noconfirm --collect-all ultralytics --hidden-import torch.backends.cudnn --hidden-import torch.backends.cuda
+          python << 'PYEOF'
+          import os
+          import subprocess
+
+          # 基础命令
+          cmd = [
+              'pyinstaller',
+              '--onefile',
+              '--name', 'helmet_detector_cuda',
+              '--add-data', 'exp.pt;.',
+              '--collect-all', 'torch',
+              '--hidden-import', 'torch.cuda',
+              '--hidden-import', 'torch.backends.cudnn',
+              '--hidden-import', 'torch.backends.cuda',
+              '--hidden-import', 'torch._C',
+              'helmet.py',
+              '--noconfirm',
+          ]
+
+          # 如果有 CUDA DLL，添加 --add-binary
+          if os.path.isdir('cuda_dlls') and os.listdir('cuda_dlls'):
+              dll_files = [f for f in os.listdir('cuda_dlls') if f.endswith('.dll')]
+              if dll_files:
+                  dll_path = 'cuda_dlls'
+                  # Windows 路径分隔符
+                  for dll in dll_files:
+                      cmd.extend(['--add-binary', f'{dll_path}/{dll};.'])
+                  print(f"Adding {len(dll_files)} CUDA DLLs to bundle")
+
+          print(f"Running: {' '.join(cmd)}")
+          result = subprocess.run(cmd, capture_output=False)
+          exit(result.returncode)
+          PYEOF
+          
+      - name: Check exe size
+        run: |
+          ls -lh dist/helmet_detector_cuda.exe 2>/dev/null || echo "EXE not found"
           
       - name: Upload CUDA artifact
         uses: actions/upload-artifact@v4
         with:
           name: helmet_detector_cuda
           path: dist/helmet_detector_cuda.exe
-
