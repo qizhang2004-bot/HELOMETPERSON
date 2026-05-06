@@ -1,4 +1,4 @@
-name: Build Windows Executable
+name: Build Windows Executables (CPU + CUDA)
 
 on:
   push:
@@ -6,7 +6,8 @@ on:
   workflow_dispatch:
 
 jobs:
-  build:
+  build-cpu:
+    name: Build CPU Version
     runs-on: windows-latest
     
     steps:
@@ -18,17 +19,48 @@ jobs:
         with:
           python-version: '3.11'
           
-      - name: Install dependencies
+      - name: Install dependencies (CPU)
         run: |
           python -m pip install --upgrade pip
-          pip install pyinstaller ultralytics opencv-python torch torchvision --no-cache-dir
+          pip install pyinstaller ultralytics opencv-python --no-cache-dir
+          pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
           
-      - name: Build executable
+      - name: Build CPU executable
         run: |
-          pyinstaller --onefile --name helmet_detector --add-data "exp.pt;." helmet.py --noconfirm --collect-all ultralytics
+          pyinstaller --onefile --name helmet_detector_cpu --add-data "exp.pt;." helmet.py --noconfirm --collect-all ultralytics
           
-      - name: Upload artifact
+      - name: Upload CPU artifact
         uses: actions/upload-artifact@v4
         with:
-          name: helmet_detector
-          path: dist/helmet_detector.exe
+          name: helmet_detector_cpu
+          path: dist/helmet_detector_cpu.exe
+
+  build-cuda:
+    name: Build CUDA Version
+    runs-on: windows-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          
+      - name: Install dependencies (CUDA)
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller ultralytics opencv-python --no-cache-dir
+          pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+          
+      - name: Build CUDA executable
+        run: |
+          pyinstaller --onefile --name helmet_detector_cuda --add-data "exp.pt;." helmet.py --noconfirm --collect-all ultralytics --hidden-import torch.backends.cudnn --hidden-import torch.backends.cuda
+          
+      - name: Upload CUDA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: helmet_detector_cuda
+          path: dist/helmet_detector_cuda.exe
+
