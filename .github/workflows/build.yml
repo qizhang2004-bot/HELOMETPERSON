@@ -32,11 +32,3 @@ jobs:
         with:
           name: helmet_detector
           path: dist/helmet_detector.exe
-
-      - name: Upload model file separately
-        uses: actions/upload-artifact@v4
-        with:
-          name: helmet_model
-          path: exp.pt
-          retention-days: 1
-
