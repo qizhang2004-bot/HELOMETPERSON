@@ -5,6 +5,9 @@ on:
     branches: [ main ]
   workflow_dispatch:
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   # ============ Windows CPU版 ============
   build-cpu:
@@ -12,7 +15,7 @@ jobs:
     runs-on: windows-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -28,7 +31,7 @@ jobs:
         run: pyinstaller --onefile --name helmet_cpu --add-data "exp.pt;." helmet.py --noconfirm --collect-all ultralytics
 
       - name: Upload
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: helmet_cpu_windows
           path: dist/helmet_cpu.exe
@@ -39,7 +42,7 @@ jobs:
     runs-on: windows-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -55,7 +58,7 @@ jobs:
         run: pyinstaller --onefile --name helmet_cuda --add-data "exp.pt;." helmet.py --noconfirm --collect-all torch --collect-all ultralytics --hidden-import torch.cuda --hidden-import torch.backends.cudnn
 
       - name: Upload
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: helmet_cuda_windows
           path: dist/helmet_cuda.exe
@@ -66,7 +69,7 @@ jobs:
     runs-on: macos-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -82,7 +85,7 @@ jobs:
         run: pyinstaller --onefile --name helmet_mps --add-data "exp.pt:." helmet.py --noconfirm --collect-all ultralytics
 
       - name: Upload
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: helmet_mps_macos
           path: dist/helmet_mps
