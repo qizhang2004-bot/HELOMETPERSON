@@ -54,92 +54,102 @@ jobs:
           pip install pyinstaller ultralytics opencv-python --no-cache-dir
           pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
           
+      - name: Create Python helper script
+        run: |
+          $script = @'
+import os, shutil, glob
+import torch
+
+torch_path = os.path.dirname(torch.__file__)
+print(f"Torch path: {torch_path}")
+
+os.makedirs('cuda_dlls', exist_ok=True)
+copied = 0
+
+# 1. Copy from torch/lib/
+lib_path = os.path.join(torch_path, 'lib')
+if os.path.exists(lib_path):
+    for dll in glob.glob(os.path.join(lib_path, '*.dll')):
+        shutil.copy(dll, 'cuda_dlls')
+        print(f"Copied: {dll}")
+        copied += 1
+
+# 2. Copy nvrtc, cublas, cudart
+for root, dirs, files in os.walk(torch_path):
+    for f in files:
+        if any(x in f.lower() for x in ['nvrtc', 'nvtx', 'cublas', 'cudart', 'cudnn', 'nvptx']):
+            if f.endswith('.dll'):
+                src = os.path.join(root, f)
+                dst = os.path.join('cuda_dlls', f)
+                if not os.path.exists(dst):
+                    shutil.copy(src, 'cuda_dlls')
+                    print(f"Copied: {src}")
+                    copied += 1
+
+print(f"Total DLLs copied: {copied}")
+if copied > 0:
+    for f in os.listdir('cuda_dlls'):
+        print(f"  - {f}")
+else:
+    print("WARNING: No CUDA DLLs found!")
+'@
+          $script | Out-File -FilePath find_cuda_dlls.py -Encoding UTF8
+          Get-Content find_cuda_dlls.py
+          
       - name: Find and copy CUDA DLLs
         run: |
-          python << 'PYEOF'
-          import os
-          import shutil
-          import glob
-
-          import torch
-          torch_path = os.path.dirname(torch.__file__)
-          print(f"Torch path: {torch_path}")
-
-          os.makedirs('cuda_dlls', exist_ok=True)
-          copied = []
-
-          # 1. Copy from torch/lib/
-          lib_path = os.path.join(torch_path, 'lib')
-          if os.path.exists(lib_path):
-              for dll in glob.glob(os.path.join(lib_path, '*.dll')):
-                  shutil.copy(dll, 'cuda_dlls')
-                  copied.append(dll)
-                  print(f"Copied: {dll}")
-
-          # 2. Copy nvrtc, cublas, cudart from torch/
-          for root, dirs, files in os.walk(torch_path):
-              for f in files:
-                  if any(x in f.lower() for x in ['nvrtc', 'nvtx', 'cublas', 'cudart', 'cudnn', 'nvptx']):
-                      if f.endswith('.dll'):
-                          src = os.path.join(root, f)
-                          dst = os.path.join('cuda_dlls', f)
-                          if not os.path.exists(dst):
-                              shutil.copy(src, 'cuda_dlls')
-                              copied.append(src)
-                              print(f"Copied: {src}")
-
-          print(f"\nTotal DLLs copied: {len(copied)}")
-          if copied:
-              print("Files:", os.listdir('cuda_dlls'))
-          else:
-              print("WARNING: No CUDA DLLs found!")
-          PYEOF
+          python find_cuda_dlls.py
+          if (Test-Path cuda_dlls) {
+            Write-Host "=== CUDA DLLs found ==="
+            Get-ChildItem cuda_dlls | ForEach-Object { Write-Host $_.Name }
+          } else {
+            Write-Host "No cuda_dlls directory created"
+          }
           
-      - name: Check CUDA DLLs
+      - name: Create build helper script
         run: |
-          echo "=== CUDA DLLs found ==="
-          ls -la cuda_dlls/ 2>/dev/null || echo "No DLLs directory"
-          du -sh cuda_dlls/ 2>/dev/null || echo "No size info"
+          $script = @'
+import os
+import subprocess
+
+cmd = [
+    'pyinstaller',
+    '--onefile',
+    '--name', 'helmet_detector_cuda',
+    '--add-data', 'exp.pt;.',
+    '--collect-all', 'torch',
+    '--hidden-import', 'torch.cuda',
+    '--hidden-import', 'torch.backends.cudnn',
+    '--hidden-import', 'torch.backends.cuda',
+    '--hidden-import', 'torch._C',
+    'helmet.py',
+    '--noconfirm',
+]
+
+if os.path.isdir('cuda_dlls'):
+    dlls = [f for f in os.listdir('cuda_dlls') if f.endswith('.dll')]
+    if dlls:
+        for dll in dlls:
+            cmd.extend(['--add-binary', f'cuda_dlls\\{dll};.'])
+        print(f"Adding {len(dlls)} CUDA DLLs")
+
+print('Running:', ' '.join(cmd))
+result = subprocess.run(cmd)
+exit(result.returncode)
+'@
+          $script | Out-File -FilePath build_exe.py -Encoding UTF8
           
       - name: Build CUDA executable
-        run: |
-          python << 'PYEOF'
-          import os
-          import subprocess
-
-          # 基础命令
-          cmd = [
-              'pyinstaller',
-              '--onefile',
-              '--name', 'helmet_detector_cuda',
-              '--add-data', 'exp.pt;.',
-              '--collect-all', 'torch',
-              '--hidden-import', 'torch.cuda',
-              '--hidden-import', 'torch.backends.cudnn',
-              '--hidden-import', 'torch.backends.cuda',
-              '--hidden-import', 'torch._C',
-              'helmet.py',
-              '--noconfirm',
-          ]
-
-          # 如果有 CUDA DLL，添加 --add-binary
-          if os.path.isdir('cuda_dlls') and os.listdir('cuda_dlls'):
-              dll_files = [f for f in os.listdir('cuda_dlls') if f.endswith('.dll')]
-              if dll_files:
-                  dll_path = 'cuda_dlls'
-                  # Windows 路径分隔符
-                  for dll in dll_files:
-                      cmd.extend(['--add-binary', f'{dll_path}/{dll};.'])
-                  print(f"Adding {len(dll_files)} CUDA DLLs to bundle")
-
-          print(f"Running: {' '.join(cmd)}")
-          result = subprocess.run(cmd, capture_output=False)
-          exit(result.returncode)
-          PYEOF
+        run: python build_exe.py
           
       - name: Check exe size
         run: |
-          ls -lh dist/helmet_detector_cuda.exe 2>/dev/null || echo "EXE not found"
+          if (Test-Path dist/helmet_detector_cuda.exe) {
+            $size = (Get-Item dist/helmet_detector_cuda.exe).Length / 1MB
+            Write-Host "EXE size: $([math]::Round($size, 2)) MB"
+          } else {
+            Write-Host "EXE not found!"
+          }
           
       - name: Upload CUDA artifact
         uses: actions/upload-artifact@v4
